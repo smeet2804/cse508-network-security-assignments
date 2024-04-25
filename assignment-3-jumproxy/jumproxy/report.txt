@@ -1,0 +1,230 @@
+****Jumproxy****
+
+Name: Smeet Mayurbhai Shah
+ID: 115375154
+
+****************
+
+
+****Code Overview****
+
+**Data Preparation and Encryption at the Client Side**
+
+The process starts with the client preparing data for transmission. It gathers up to 900 KB of data and encrypts each piece separately to ensure security. During encryption, a 2-byte header indicating the data's actual length is added to the encrypted data. Additionally, padding is used to adjust the size of the encrypted packet to exactly 1024 KB. This standardized size helps to handle any issues such as packet fragmentation or merging during transit.
+
+**Transmission to Server and Handling at Server Side**
+
+Once encrypted and formatted, the data is sent to the server-side Jumproxy. This server is programmed to receive data in uniform chunks of 1024 KB, which maintains consistency regardless of any alterations during transit, such as packet fragmentation. Upon receiving each chunk, the server first reads the initial 2 bytes to determine the payload's length, ignoring any excess padding. The server then attempts to decrypt the data. If the decryption is unsuccessful due to an incorrect key or passphrase, the data cannot be processed further.
+
+**Forwarding and Response Management**
+
+After decryption, the server forwards the client's request to the intended destination service. When the service sends a response, the server packages this response into 900 KB packets, encrypts each packet, adds the necessary padding to bring the size up to 1024 KB, and sends it back to the client-side Jumproxy.
+
+**Receiving and Final Decryption at Client Side**
+
+The client-side Jumproxy receives these encrypted packets, each formatted to 1024 KB. It reads the first 2 bytes of each packet to ascertain the payload's actual length and discards any superfluous padding. The packets are then decrypted using the same key used initially. Finally, the decrypted data is sent to the client's output, thus completing the secure data exchange cycle.
+
+```
+client --plain text--> client's Jumproxy --encrypted data--> server's Jumproxy --plain text--> service 
+client <--plain text-- client's Jumproxy <--encrypted data-- server's Jumproxy <--plain text-- service 
+```
+
+To handle multiple clients concurrently, the system leverages Go routines. These are lightweight threads managed by the Go runtime, allowing the Jumproxy instances to handle multiple data streams simultaneously without significant overhead. This concurrency model is crucial for maintaining high throughput and responsiveness in the system, even as the number of clients scales up.
+
+**Encryption Process**
+
+In this implementation, the server generates a unique random salt for each client, which is then used along with a passphrase to derive a static symmetric key using PBKDF2 (Password-Based Key Derivation Function 2). After key derivation, the server initializes an AES cipher in GCM mode (Advanced Encryption Standard in Galois/Counter Mode), generates a random nonce, and encrypts the plaintext using both the AES cipher and the nonce. The initial salt is sent to the client at the beginning of the session and is not transmitted again. The client uses the same derived key for encrypting data before sending it back to the server, ensuring secure bidirectional communication.
+
+**Decryption Process**
+
+Upon receiving the ciphertext, the client uses the previously received salt and the passphrase to derive the symmetric key, if not already done. The client then initializes an AES cipher in GCM mode, extracts the nonce from the ciphertext, and proceeds to decrypt the ciphertext using the AES cipher and the nonce to recover the original plaintext. Similarly, when the server receives encrypted data from the client, it uses the same key and process to decrypt the messages. This method maintains a high level of security and operational efficiency. 
+
+
+*********************
+
+
+****File Structure****
+
+1. **client.go**: Manages the transmission of data from the client's standard input (stdin) to the Jumproxy and facilitates the reception of data from Jumproxy to the client's standard output (stdout).
+
+2. **crypto.go**: Contains functions related to cryptographic operations, such as generating encryption keys from a combination of salt and passphrase, as well as encrypting and decrypting data.
+
+3. **go.mod**: Defines the module's properties, including its dependencies.
+
+4. **main.go**: Serves as the primary entry point for the application. It interprets command-line arguments and initiates the appropriate functionalities on either the client or server side based on the specified parameters.
+
+5. **proxy.go**: Manages the forwarding of data between the sender and receiver while performing the specified operations, such as encryption or decryption.
+
+6. **server.go**: Handles multiple concurrent client connections, forwards data from Jumproxy to the specified service as directed by the client, and manages the reception of responses from the service and forwards it to Jumproxy.
+
+***********************
+
+
+****Running the code****
+
+1. To ensure files accurately reflect the project's dependencies, adding missing modules and removing unused ones, use to Go mod tidy command.
+
+```bash
+go mod tidy
+```
+
+2. To compile the Jumproxy code, use the Go build command:
+
+```bash
+go build
+```
+
+3. To run Jumproxy, the basic syntax is as follows:
+
+```bash
+jumproxy [-l listenport] -k pwdfile [-d debugfile] destination port
+```
+
+#### Options
+
+- `-l listenport`: Activates reverse-proxy mode. Jumproxy will listen for incoming connections on the specified `listenport` and forward them to `destination:port`.
+
+- `-k pwdfile`: Specifies the ASCII text file containing the encryption passphrase. This file is used to encrypt and decrypt the traffic.
+
+- `-d debugfile`: If provided, Jumproxy will log debugging information to the specified `debugfile`, else saves log in `myapp.log`
+
+#### Modes
+
+- **Client Mode**: In this default mode, Jumproxy reads plaintext traffic from stdin and writes to stdout, while encrypting and sending data to, or receiving and decrypting data from `destination:port`.
+
+- **Reverse-Proxy Mode**: When `-l` is used, Jumproxy operates in reverse-proxy mode. It listens for incoming connections on `listenport` and relays them to `destination:port`. Jumproxy will continue to listen for new connections even after a connection is terminated, and it is capable of handling multiple concurrent sessions using the same encryption key.
+
+*************************
+
+
+****Sample Test Cases****
+
+#### Test Case 1: SSH Service
+
+This test case demonstrates how to set up a reverse proxy for SSH services using `jumproxy`.
+
+**Server-Side Setup:**
+
+1. Start the server-side reverse proxy by running the following command:
+   ```
+   ./jumproxy -l 2222 -k key.txt <server_ip_address> 22
+   ```
+   Replace `<server_ip_address>` with the IP address of the server where `jumproxy` is running.
+
+**Client-Side Setup:**
+
+1. Start the client-side proxy with the following SSH command:
+   ```
+   ssh -o "ProxyCommand ./jumproxy -k key.txt <server_ip_address> 2222" <your_username>@<server_ip_address>
+   ```
+   Replace `<server_ip_address>` with the IP address used in the server-side setup, and `<your_username>` with  SSH username.
+
+2. Once connected, you can execute commands such as `cat file1.txt` to view the contents of `file1.txt`, or `man man` to display the manual page for the `man` command.
+
+#### Test Case 2: Sending Data to Netcat
+
+This test case illustrates how to use `jumproxy` to interact with a Netcat server.
+
+**Netcat Server Setup:**
+
+1. Start the Netcat server by running:
+   ```
+   nc -lkp 1234
+   ```
+
+**Server-Side Proxy Setup:**
+
+2. Start the server-side proxy with the following command:
+   ```
+   ./jumproxy -l 2222 -k key.txt <server_ip_address> 1234
+   ```
+
+**Client-Side Proxy Setup:**
+
+3. Connect to the server-side `jumproxy` and interact with the Netcat server using:
+   ```
+   ./jumproxy -k key.txt <server_ip_address> 2222
+   ```
+   Replace `<server_ip_address>` with the IP address of the server running `jumproxy`.
+
+   To send a large file to netcat server use following command:
+   ```
+   cat file.txt | ./jumproxy -k key.txt <server_ip_address> 2222
+   ```
+
+#### Test Case 3: Testing Concurrent Client Connections
+
+Use the following steps to test concurrent connections:
+
+1. Ensure Jumproxy is up and running on port 2222.
+
+2. Open multiple terminal windows or sessions to simulate different clients.
+
+3. In each terminal, use the command provided in the setup instructions to connect to Jumproxy. For example, if using `ssh` to connect, you might use:
+   ```
+   ssh -o "ProxyCommand ./jumproxy -k key.txt <server_ip_address> 2222" <your_username>@<server_ip_address>
+   ```
+
+
+**Verifying Concurrent Connections on Port 2222**
+
+To verify that multiple clients can concurrently connect to Jumproxy running on port 2222, use the `netstat` command as follows:
+
+1. **Check if Jumproxy is listening**:
+   ```
+   netstat -ant | grep -E '(:2222\s|:2222$)'
+   ```
+   Expected output:
+   ```
+   tcp6       0      0 :::2222                 :::*                    LISTEN
+   ```
+
+2. **Verify established connections**:
+   ```
+   netstat -ant | grep -E '(:2222\s|:2222$)'
+   ```
+   Expected output showing multiple connections:
+   ```
+   tcp6       0      0 :::2222                 :::*                    LISTEN
+   tcp6       0      0 192.168.198.132:2222    192.168.198.129:46542   ESTABLISHED
+   tcp6       0      0 192.168.198.132:2222    192.168.198.129:37444   ESTABLISHED
+   tcp6       0      0 192.168.198.132:2222    192.168.198.129:44676   ESTABLISHED
+   ```
+
+**Verifying Connections on SSH Port 22**
+
+To check connections on SSH port 22, use the `netstat` command:
+
+1. **Confirm SSH is listening**:
+   ```
+   netstat -ant | grep -E '(:22\s|:22$)'
+   ```
+   Expected output:
+   ```
+   tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN     
+   tcp6       0      0 :::22                   :::*                    LISTEN     
+   ```
+
+2. **Check active SSH connections**:
+   ```
+   netstat -ant | grep -E '(:22\s|:22$)'
+   ```
+   Expected output showing established connections:
+   ```
+   tcp        0      0 192.168.198.132:57058   192.168.198.132:22      ESTABLISHED
+   tcp        0      0 192.168.198.132:48272   192.168.198.132:22      ESTABLISHED
+   tcp        0      0 192.168.198.132:22      192.168.198.132:53592   ESTABLISHED
+   tcp        0      0 192.168.198.132:53592   192.168.198.132:22      ESTABLISHED
+   tcp        0      0 192.168.198.132:22      192.168.198.132:57058   ESTABLISHED
+   tcp        0      0 192.168.198.132:22      192.168.198.132:48272   ESTABLISHED
+   ```
+
+*************************
+
+
+
+****References****
+1. https://go.dev/src/crypto/cipher/example_test.go
+2. https://www.developer.com/languages/intro-socket-programming-go/
+
+******************
